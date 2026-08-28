@@ -2,8 +2,10 @@ import './style.css';
 import storiesData from './data/stories100.json';
 import type { MachineState, ReactionType, Story } from './types';
 import {
+  getDispensedCount,
   getLastStoryId,
   getReaction,
+  incrementDispensedCount,
   setLastStoryId,
   setReaction,
 } from './storage';
@@ -25,6 +27,7 @@ let state: MachineState = 'IDLE';
 let currentStory: Story | undefined;
 let currentReaction: ReactionType | undefined;
 let hasCoin = false;
+let dispensedCount = getDispensedCount();
 let showRefillAlert = false;
 let loadingTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -41,7 +44,21 @@ function pickRandomStory(excludeId: string | undefined): Story | undefined {
 function insertCoin(): void {
   if (hasCoin || state === 'DRAWING') return;
   hasCoin = true;
-  render();
+
+  if (state === 'RESULT' || state === 'REACTED') {
+    // Re-arming after a result clears the old card back to the mascot
+    // screen instead of leaving it sitting there with a re-armed CTA.
+    state = 'IDLE';
+    currentReaction = undefined;
+    render();
+    return;
+  }
+
+  // Patch the controls in place instead of a full render() — re-rendering
+  // the whole panel would recreate the story card element and replay its
+  // jam-drop entrance animation, making it look like it "shakes".
+  updateControls();
+  if (state === 'IDLE') updateIdleHint();
 }
 
 function startDrawing(): void {
@@ -62,7 +79,10 @@ function startDrawing(): void {
     if (loadingTimer) clearInterval(loadingTimer);
     const next = pickRandomStory(currentStory?.id ?? getLastStoryId());
     currentStory = next;
-    if (next) setLastStoryId(next.id);
+    if (next) {
+      setLastStoryId(next.id);
+      dispensedCount = incrementDispensedCount();
+    }
     currentReaction = next ? getReaction(next.id) : undefined;
     state = next ? (currentReaction ? 'REACTED' : 'RESULT') : 'RESULT';
     render();
@@ -77,6 +97,22 @@ function handleReaction(reaction: ReactionType): void {
   render();
 }
 
+function remainingStock(): number {
+  return Math.max(stories.length - dispensedCount, 0);
+}
+
+function getIdleHintHtml(): string {
+  const hint = hasCoin
+    ? '준비 완료! 잼얘 뽑기를 눌러보세요.'
+    : '먼저 오른쪽 코인을 넣어주세요.';
+  return `따쮜가 엄선하지 않은 잼얘가 <br/> <b class="idle-hint__count">${remainingStock()}개</b> 들어 있어요.<br>${hint}`;
+}
+
+function updateIdleHint(): void {
+  const hintEl = app.querySelector<HTMLElement>('.idle-hint');
+  if (hintEl && stories.length > 0) hintEl.innerHTML = getIdleHintHtml();
+}
+
 function renderMascotOrEmpty(): string {
   if (stories.length === 0) {
     return `
@@ -85,10 +121,6 @@ function renderMascotOrEmpty(): string {
       </div>
     `;
   }
-
-  const hint = hasCoin
-    ? '준비 완료! 잼얘 뽑기를 눌러보세요.'
-    : '먼저 오른쪽 코인을 넣어주세요.';
 
   return `
     <div class="mascot-state">
@@ -102,7 +134,7 @@ function renderMascotOrEmpty(): string {
         </div>
         <span class="mascot__sparkle">✦</span>
       </div>
-      <p class="idle-hint">따쮜가 엄선하지 않은 잼얘가 <br/> <b class="idle-hint__count">${stories.length}개</b> 들어 있어요.<br>${hint}</p>
+      <p class="idle-hint">${getIdleHintHtml()}</p>
     </div>
   `;
 }
@@ -147,9 +179,9 @@ function renderResultOrReacted(): string {
     .join(' ');
 
   const thanksText = jamSelected
-    ? '반응 고마워!'
+    ? '( 따쮜 상태 : 신남 )'
     : nojamSelected
-      ? '반응 고마워! 다음엔 더 잼있는 걸로.'
+      ? '( 따쮜 상태 : 슬픔 )'
       : '';
 
   return `
@@ -196,6 +228,55 @@ function renderRefillAlert(): string {
   `;
 }
 
+function getControlsViewModel() {
+  const canDraw = hasCoin && state !== 'DRAWING' && stories.length > 0;
+  const ctaLabel =
+    state === 'DRAWING'
+      ? '뽑는 중...'
+      : state === 'IDLE'
+        ? '잼얘 뽑기'
+        : '<s>꿈결</s>코인을 넣어주세요';
+  const ctaClass = [
+    'cta',
+    canDraw ? 'cta--active' : '',
+    state === 'DRAWING' ? 'cta--drawing' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const coinSlotClass = `coin-slot ${hasCoin ? 'coin-slot--ready' : ''}`.trim();
+  const coinClass = `coin ${hasCoin ? 'coin--ready' : ''}`.trim();
+  const coinDisabled = hasCoin || state === 'DRAWING';
+  const coinLabel = hasCoin ? 'READY' : 'INSERT';
+
+  return {
+    canDraw,
+    ctaLabel,
+    ctaClass,
+    coinSlotClass,
+    coinClass,
+    coinDisabled,
+    coinLabel,
+  };
+}
+
+function updateControls(): void {
+  const vm = getControlsViewModel();
+  const cta = app.querySelector<HTMLButtonElement>('[data-action="draw"]');
+  const coinBtn = app.querySelector<HTMLButtonElement>('[data-action="coin"]');
+  if (!cta || !coinBtn) return;
+
+  cta.className = vm.ctaClass;
+  cta.disabled = !vm.canDraw;
+  cta.innerHTML = vm.ctaLabel;
+
+  coinBtn.className = vm.coinSlotClass;
+  coinBtn.disabled = vm.coinDisabled;
+  const coinSpan = coinBtn.querySelector<HTMLElement>('.coin');
+  if (coinSpan) coinSpan.className = vm.coinClass;
+  const labelSpan = coinBtn.querySelector<HTMLElement>('.coin-slot__label');
+  if (labelSpan) labelSpan.textContent = vm.coinLabel;
+}
+
 function render(): void {
   const displayBody =
     state === 'IDLE'
@@ -204,20 +285,15 @@ function render(): void {
         ? renderDrawing()
         : renderResultOrReacted();
 
-  const canDraw = hasCoin && state !== 'DRAWING' && stories.length > 0;
-  const ctaLabel =
-    state === 'DRAWING'
-      ? '뽑는 중...'
-      : state === 'IDLE'
-        ? '잼얘 뽑기'
-        : '하나 더 뽑기';
-  const ctaClass = [
-    'cta',
-    canDraw ? 'cta--active' : '',
-    state === 'DRAWING' ? 'cta--drawing' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const {
+    ctaClass,
+    canDraw,
+    ctaLabel,
+    coinSlotClass,
+    coinClass,
+    coinDisabled,
+    coinLabel,
+  } = getControlsViewModel();
 
   app.innerHTML = `
     <div class="page">
@@ -241,13 +317,9 @@ function render(): void {
 
         <div class="controls">
           <button class="${ctaClass}" data-action="draw" ${canDraw ? '' : 'disabled'}>${ctaLabel}</button>
-          <button
-            class="coin-slot ${hasCoin ? 'coin-slot--ready' : ''}"
-            data-action="coin"
-            ${hasCoin || state === 'DRAWING' ? 'disabled' : ''}
-          >
-            <span class="coin ${hasCoin ? 'coin--ready' : ''}"><span class="coin__slit"></span></span>
-            <span class="coin-slot__label">${hasCoin ? 'READY' : 'INSERT'}</span>
+          <button class="${coinSlotClass}" data-action="coin" ${coinDisabled ? 'disabled' : ''}>
+            <span class="${coinClass}"><span class="coin__slit"></span></span>
+            <span class="coin-slot__label">${coinLabel}</span>
           </button>
         </div>
       </div>

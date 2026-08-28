@@ -2,6 +2,7 @@ import type { ReactionMap, ReactionType } from './types'
 
 const REACTIONS_KEY = 'jam-machine:reactions'
 const LAST_STORY_KEY = 'jam-machine:lastStoryId'
+const DISPENSED_COUNT_KEY = 'jam-machine:dispensedCount'
 
 function safeGet<T>(key: string, fallback: T): T {
   try {
@@ -41,4 +42,14 @@ export function getLastStoryId(): string | undefined {
 
 export function setLastStoryId(storyId: string): void {
   safeSet(LAST_STORY_KEY, storyId)
+}
+
+export function getDispensedCount(): number {
+  return safeGet<number>(DISPENSED_COUNT_KEY, 0)
+}
+
+export function incrementDispensedCount(): number {
+  const next = getDispensedCount() + 1
+  safeSet(DISPENSED_COUNT_KEY, next)
+  return next
 }
