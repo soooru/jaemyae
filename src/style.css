@@ -382,7 +382,7 @@ body {
   border-radius: 24px 20px 26px 22px;
   font-family: 'Gaegu', cursive;
   font-weight: 700;
-  font-size: 1.8rem;
+  font-size: 1.3rem;
   box-shadow: 0 6px 0 var(--ink);
   transition:
     transform 0.12s ease,
