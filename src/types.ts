@@ -12,7 +12,7 @@ export type ReactionType = 'jam' | 'nojam'
 
 export type ReactionMap = Record<string, ReactionType>
 
-export type ModalKind = 'job' | 'form' | 'done' | 'list' | 'rank'
+export type ModalKind = 'job' | 'form' | 'done' | 'rank'
 
 export interface StoryStat {
   jam: number

@@ -14,7 +14,6 @@ import {
   getLastStoryId,
   getReaction,
   getStats,
-  removeCustomStory,
   resetStats,
   setLastStoryId,
   setReaction,
@@ -38,9 +37,6 @@ const RAINBOW_COLORS = [
   '#3C8DE0',
   '#7250C7',
 ];
-const EASTER_EGG_STREAK = 7;
-const EASTER_EGG_MAX_GAP_MS = 1100;
-
 const JOB_INFO = [
   ['근무처', '대기업 지사'],
   ['근무지', '남해'],
@@ -55,8 +51,6 @@ let hasCoin = false;
 let loadingTimer: ReturnType<typeof setInterval> | undefined;
 
 let coinClickCount = 0;
-let coinStreak = 0;
-let lastCoinClickAt = 0;
 
 let modal: ModalKind | undefined;
 
@@ -92,13 +86,13 @@ function closeModal(): void {
 function insertCoin(): void {
   if (state === 'DRAWING') return;
 
-  const now = Date.now();
-  coinStreak = now - lastCoinClickAt <= EASTER_EGG_MAX_GAP_MS ? coinStreak + 1 : 1;
-  lastCoinClickAt = now;
   coinClickCount += 1;
 
-  if (coinStreak === EASTER_EGG_STREAK) {
-    coinStreak = 0;
+  // The coin cycles red→orange→yellow→green→blue→purple; landing on purple
+  // (every 6th click, cumulative — draws don't reset it) pops the ranking
+  // modal instead of loading a coin, then the cycle naturally loops back to
+  // red on the next click via the modulo in getControlsViewModel().
+  if (coinClickCount % RAINBOW_COLORS.length === 0) {
     openModal('rank');
     return;
   }
@@ -129,7 +123,6 @@ function insertCoin(): void {
 function startDrawing(): void {
   if (!hasCoin || state === 'DRAWING') return;
   hasCoin = false;
-  coinStreak = 0;
   state = 'DRAWING';
   currentReaction = undefined;
   render();
@@ -372,7 +365,7 @@ function renderFormModal(): string {
 
 function renderDoneModal(): string {
   return renderModalShell(
-    '채용 완료',
+    '작업 완료',
     `
       <div class="mascot-state">
         <div class="mascot">
@@ -384,44 +377,9 @@ function renderDoneModal(): string {
             <span class="mascot__mouth"></span>
           </div>
         </div>
-        <p class="idle-hint">채용 완료! / 잼얘 하나가 들어갔어요.<br />이제 자판기에서 뽑힐 수 있어요.</p>
+        <p class="idle-hint">작업 완료! / 잼얘 하나가 들어갔어요.<br />이제 자판기에서 뽑힐 수 있어요.</p>
       </div>
-      <div class="modal-actions">
-        <button class="modal-cta modal-cta--secondary" data-action="done-again">하나 더</button>
-        <button class="modal-cta" data-action="done-list">목록 보기</button>
-      </div>
-    `,
-  );
-}
-
-function renderListModal(): string {
-  const customs = getCustomStories();
-  const items = customs.length
-    ? customs
-        .map(
-          (story) => `
-            <div class="list-card">
-              <div class="list-card__head">
-                <span class="list-card__title">${story.title ?? '제목 없는 잼얘'}</span>
-                <span class="list-card__by">by ${story.author ?? '챗쮜피티'}</span>
-              </div>
-              <p class="list-card__content">${story.content}</p>
-              <button class="pill-btn pill-btn--danger" data-action="list-delete" data-story-id="${story.id}">삭제</button>
-            </div>
-          `,
-        )
-        .join('')
-    : `<div class="empty-box">아직 채워진 잼얘가 없어요</div>`;
-
-  return renderModalShell(
-    '들어간 잼얘',
-    `
-      <p class="modal-subtitle">${customs.length}개가 자판기에 채워져 있어요</p>
-      <div class="list-stack">${items}</div>
-      <div class="modal-footer">
-        <button class="link-btn" data-action="list-rank">잼얘 순위표 보기</button>
-        <button class="modal-cta" data-action="list-add">잼얘 추가하기</button>
-      </div>
+      <button class="modal-cta" data-action="done-again">하나 더</button>
     `,
   );
 }
@@ -508,8 +466,6 @@ function renderModal(): string {
       return renderFormModal();
     case 'done':
       return renderDoneModal();
-    case 'list':
-      return renderListModal();
     case 'rank':
       return renderRankModal();
     default:
@@ -633,22 +589,6 @@ function render(): void {
   app
     .querySelector('[data-action="done-again"]')
     ?.addEventListener('click', () => openModal('form'));
-  app
-    .querySelector('[data-action="done-list"]')
-    ?.addEventListener('click', () => openModal('list'));
-  app
-    .querySelector('[data-action="list-rank"]')
-    ?.addEventListener('click', () => openModal('rank'));
-  app
-    .querySelector('[data-action="list-add"]')
-    ?.addEventListener('click', () => openModal('form'));
-  app.querySelectorAll<HTMLButtonElement>('[data-action="list-delete"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const id = btn.dataset.storyId;
-      if (id) removeCustomStory(id);
-      render();
-    });
-  });
   app
     .querySelector('[data-action="rank-reset"]')
     ?.addEventListener('click', () => {

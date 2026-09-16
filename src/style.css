@@ -598,29 +598,6 @@ body {
   cursor: not-allowed;
 }
 
-.modal-cta--secondary {
-  min-height: 52px;
-  background: var(--display-bg);
-  color: var(--ink);
-}
-
-.modal-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 6px;
-}
-
-.modal-actions .modal-cta {
-  margin-top: 0;
-}
-
-.modal-footer {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 4px;
-}
-
 .link-btn {
   background: none;
   border: none;
@@ -724,63 +701,6 @@ body {
   padding: 12px 14px;
   resize: vertical;
   line-height: 1.6;
-}
-
-/* --- list modal --- */
-
-.list-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.list-card {
-  background: var(--card-bg);
-  border: 3px solid var(--ink);
-  border-radius: 22px 18px 24px 20px;
-  padding: 14px;
-  box-shadow: 0 4px 0 var(--ink);
-}
-
-.list-card__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.list-card__title {
-  font-family: 'Gaegu', cursive;
-  font-size: 1.15rem;
-}
-
-.list-card__by {
-  flex-shrink: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.list-card__content {
-  margin: 0 0 10px;
-  font-size: 0.88rem;
-  line-height: 1.6;
-  color: var(--body-text);
-}
-
-.pill-btn {
-  border: 2px solid var(--ink);
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-family: 'Gaegu', cursive;
-  font-weight: 700;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.pill-btn--danger {
-  background: var(--nojam-bg);
 }
 
 /* --- rank modal --- */
