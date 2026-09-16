@@ -1,0 +1,281 @@
+# 잼얘자판기 (jam-story-machine)
+
+버튼을 누르면 짧은 이야기(잼얘) 하나를 랜덤으로 뽑아 보여주는 한 화면짜리 웹서비스.
+친구용(쩨리를 위한) 장난 프로젝트. 프론트엔드는 Vite + vanilla TypeScript(정적 사이트).
+
+**진행 순서(사용자 지정)**: 프론트엔드(모달 4종 · UGC 등록 · 랭킹)를 localStorage 프로토타입으로
+먼저 완성 → 그다음 맨 마지막에 Supabase로 교체. 지금은 프론트 구현이 끝난 상태이고, Supabase
+연동은 아직 시작 전이다(아래 "백엔드" 절 참고). **Supabase 얘기가 먼저 나와도 사용자가 명시적으로
+"이제 Supabase 하자"고 하기 전까지는 백엔드 코드를 건드리지 말 것.**
+
+## 프로젝트 개요
+
+- **컨셉**: 손그림 낙서풍(doodle) 자판기 패널. 버튼(코인 투입 → 뽑기)을 누르면 짧은 트리비아/이야기
+  카드가 자판기에서 나오듯 뽑히고, 잼/노잼으로 반응을 남기는 장난감 같은 인터랙션. 추가로 누구나
+  이야기를 직접 등록(UGC)할 수 있고, 반응을 합산한 베스트/워스트 랭킹을 볼 수 있다.
+- **목적/대상**: "쩨리"라는 특정 친구에게 보여주기 위한 사적인 장난 프로젝트. 불특정 다수를 위한
+  서비스가 아니므로 회원가입 같은 무거운 기능은 불필요.
+- **한 화면 원칙**: 메인 화면은 세로 1열 레이아웃 하나로 끝난다. 메뉴/탭/설정 등 추가 내비게이션을
+  만들지 않는다. **등록/목록/랭킹 같은 나머지 기능은 전부 모달 오버레이로 처리**해서 이 원칙을
+  지킨다 (상시 노출되는 별도 화면·버튼을 추가하지 않는다).
+- **실사 자판기 아님**: 금속 질감, 상품 진열대, 배출구 트레이 같은 사실적 묘사는 하지 않고
+  손그림 낙서 톤(굵은 잉크 테두리, 비대칭 라운드, 하드 섀도)을 유지한다.
+- **native `alert`/`confirm` 사용 금지** — 모두 커스텀 모달로 구현한다.
+
+## 화면 구조 (메인, 세로 1열)
+
+```
+   ✦        ✧                  ← 반짝이 스티커(패널 바깥 절대배치 6개)
+┌─ 패널 (max-width 400px, 3px 아웃라인) ─┐
+│        쩨리를 위한                      │
+│        잼얘자판기                       │  헤더 (가운데 정렬)
+│  ──────────────────────────────────    │  3px 구분선
+│  ┌ 디스플레이 창 (min-height 262px) ┐  │  상태별 내용 교체 영역
+│  └─────────────────────────────────┘  │
+│  [   잼얘 뽑기   ]  [◉ INSERT]         │  CTA + 코인 슬롯
+└─────────────────────────────────────────┘
+        [ 인력급구!인력급구! ]              ← 채용공고 모달 진입점
+```
+
+메인에서 바뀌는 것은 **디스플레이 창 내부**, **CTA 상태**, **코인 슬롯 상태**뿐. 그 외 모든 기능
+(등록/목록/랭킹)은 모달로 처리한다. 디스플레이 창 `min-height: 262px` 고정으로 상태 전환 시
+레이아웃 점프가 없다.
+
+### 메인 화면 상태
+
+| 상태 | 진입 조건 | 디스플레이 창 | CTA |
+|---|---|---|---|
+| 대기(코인 없음) | 최초 진입 / 뽑기 직후 | 마스코트 박스(bob) + "잼얘가 N개 들어 있어요 / 먼저 오른쪽 코인을 넣어주세요." | 비활성 |
+| 대기(코인 있음) | INSERT 클릭 | "준비 완료! 잼얘 뽑기를 눌러보세요." | 활성 · "잼얘 뽑기" |
+| 뽑는 중 | CTA 클릭 | 흔들리는 박스(shake) + 로딩 문구 + 점 3개, 700ms마다 문구 순환 | 비활성 · "뽑는 중..." |
+| 결과 | 1,800ms 경과 | 카드 낙하 + 이야기 카드(작성자 `— 이름` 우하단 표기) + [잼][노잼] | **"하나 더 뽑기"** (코인 없으면 비활성) |
+| 반응 완료 | 잼/노잼 클릭 | 선택한 버튼만 컬러 고정, 반대쪽 dim + 감사 문구 | 동일 |
+
+세부 규칙: 반응은 카드당 1회(양쪽 다 disabled). 랜덤 추출 시 직전과 같은 카드가 나오면 다음으로
+밀어 연속 중복 방지. 카드에 일련번호는 표시하지 않는다. 제목 없는 카드는 "제목 없는 잼얘"로 표시
+(현재는 등록 폼에서 제목이 필수라 실제로는 발생하지 않음, 안전망 차원).
+
+**CTA 라벨 관련 수정 이력**: 예전 코드에 결과 화면 CTA가 항상 "코인을 넣어주세요"로 표시되고
+`hasCoin`이 true여도 라벨이 안 바뀌는 버그가 있었음 — "하나 더 뽑기"로 고정 수정함(2026-09-16).
+
+### 코인 규칙 (핵심 인터랙션)
+
+- 최초 CTA는 비활성. INSERT를 누르면 코인이 채워지고 라벨이 READY로 바뀐다.
+- 뽑기 1회 = 코인 1개 소모. 뽑기 시작과 동시에 코인 회수, 슬롯은 INSERT로 복귀 — "하나 더 뽑기"도
+  재투입 필요.
+- **코인이 이미 있어도 INSERT 버튼은 disabled가 아니다** (예전 버전과 다른 점). 클릭할 때마다
+  코인 색이 무지개 순환: 빨 `#F14E32` → 주 `#F2913D` → 노 `#F5C542` → 초 `#13BD7E` → 파 `#3C8DE0`
+  → 보 `#7250C7`. **누적 클릭 수 기준이라 뽑기를 해도 색 순환 자체는 리셋되지 않는다.**
+- **이스터에그**: 보라까지 여섯 번 보이고 **일곱 번째 연속 클릭**에서 잼얘 순위표(rank) 모달이
+  바로 열린다. 클릭 간격이 1.1초를 넘거나 뽑기를 하면 연속 카운트만 0으로 리셋(색 순환과는 별개
+  카운터). `src/main.ts`의 `coinClickCount`(색상용, 안 리셋) / `coinStreak`(이스터에그용, 리셋됨)
+  참고.
+
+## 모달 (5종, 공통 오버레이)
+
+오버레이 `rgba(34,48,43,.42)` · 모달 `max-width 380px` · `max-height 88vh`(내부 스크롤) · 우상단
+✕ 닫기 34×34. `form` 모달은 배경(backdrop) 클릭으로 안 닫힘(입력 중 실수로 날아가는 것 방지) —
+그 외 모달은 배경 클릭으로 닫힘. 순위표(rank)는 **상시 노출 버튼이 없고** 코인 7연속 클릭 또는
+목록(list) 모달의 링크로만 들어간다.
+
+- **채용공고(`job`)** — 메인 하단 알약 버튼 `인력급구!인력급구!` 클릭으로 진입점. `급 구` 배지 +
+  "쩨리에게 줄 잼얘 채울 / 현장직을 모집합니다" + 정보 4줄(근무처 대기업 지사 / 근무지 남해 / 일당
+  100?만원 / 복리 숙식제공) + **지원하기** 버튼. "지원하기"는 `form` 모달을 연다(입사 지원 = 이야기
+  등록이라는 농담 설정 — `done` 모달의 "채용 완료!" 문구가 이 흐름을 전제로 한다).
+- **잼얘 채우기(`form`)** — 필드 3개 전부 필수(빈 값 있으면 등록 버튼 비활성): `작업자`(20자),
+  `제목`(40자), `잼얘 본문`(textarea 5행, 라벨 옆 회색 안내 "추천: 5문장 이내"). **플레이스홀더,
+  글자수 카운터, 검증 안내 문구를 넣지 않는다.** 등록 버튼 "자판기에 넣기" → 로컬 스토리 목록에
+  추가하고 `done` 모달로 전환.
+- **채용 완료(`done`)** — 마스코트 + "채용 완료! / 잼얘 하나가 들어갔어요. 이제 자판기에서 뽑힐 수
+  있어요." + 버튼 2개: `하나 더`(`form`으로) / `목록 보기`(`list`로).
+- **들어간 잼얘(`list`)** — 이 브라우저가 등록한 커스텀 이야기 목록 + 개수. 카드마다 제목/작성자/
+  본문/삭제 버튼. 비어 있으면 점선 박스 "아직 채워진 잼얘가 없어요". 하단에 `잼얘 순위표 보기`(밑줄
+  텍스트) / `잼얘 추가하기`(코랄 버튼).
+- **잼얘 순위표(`rank`)** — "지금까지 N표가 모였어요"(N=0이면 통째로 빈 상태). **베스트**(민트 배지,
+  잼 많은 순)/**워스트**(코랄 배지, 노잼 많은 순) 각 최대 3개, 순위 메달(1 `#F5C542` / 2 `#E3DDCB`
+  / 3 `#F5A79B`) + 제목 + 작성자 + 득표수 + **본문 전체**(말줄임 없음). 하단 `기록 초기화` — 반응
+  집계(`jaemyae.stats.v1`)만 초기화하고 등록된 커스텀 이야기 자체는 지우지 않는다.
+
+## 스택 / 실행
+
+- 프론트엔드: Vite + TypeScript(strict), 프레임워크 없음. UI는 순수 DOM 조작(`innerHTML` 재렌더 +
+  부분 패치). 텍스트 입력 필드(form 모달)는 매 키 입력마다 재렌더하지 않고 `input` 이벤트로 제출
+  버튼 활성화만 토글 — 전체 재렌더를 하면 입력 중 포커스/커서 위치가 날아가기 때문.
+- 상태 저장: 전부 `localStorage` 프로토타입(아래 "데이터" 절의 키 참고). Supabase는 아직 미연동.
+- 명령어
+  - `npm run dev` — 개발 서버
+  - `npm run build` — `tsc -b && vite build` (dist/ 생성)
+  - `npm run preview` — 빌드 결과 미리보기
+
+## 디렉터리 구조
+
+```
+src/
+  main.ts               — 전체 UI 로직 (상태 머신 + 모달 시스템 + 렌더링 + 이벤트 바인딩)
+  storage.ts             — localStorage 래퍼 (반응/커스텀 스토리/통계)
+  types.ts               — Story, MachineState, ModalKind, StatsMap 등 타입
+  style.css              — 전체 스타일 (낙서풍 디자인 시스템 + 모달)
+  data/stories100.json   — 기본 제공 이야기 10개 (author: '챗쮜피티')
+  supabaseClient.ts       — Supabase 클라이언트 초기화 (배선만 돼 있음, 아직 미사용)
+  vite-env.d.ts           — import.meta.env 타입 선언
+.github/workflows/deploy.yml — GitHub Pages 자동 배포
+```
+
+## 상태 머신 / 모달 시스템 (main.ts)
+
+- `MachineState = 'IDLE' | 'DRAWING' | 'RESULT' | 'REACTED'`, `ModalKind = 'job' | 'form' | 'done'
+  | 'list' | 'rank'` (모달 안 열려 있으면 `modal`은 `undefined`).
+- `allStories()` = 기본 10개(`stories100.json`) + `getCustomStories()`(로컬에 등록된 것). 뽑기 풀·
+  재고 숫자·랭킹 모두 이 합계를 사용한다.
+- `insertCoin()`: `DRAWING` 중엔 무시. 매 클릭마다 `coinClickCount`(색상용) 증가, 클릭 간격으로
+  `coinStreak`(이스터에그용) 계산 → 7이면 `rank` 모달을 열고 종료. 이미 `hasCoin`이면 색만 갱신
+  (`updateControls()`)하고 끝. 새로 채워지는 경우 `RESULT`/`REACTED`에서는 카드를 지우고 `IDLE`로
+  전체 재렌더, `IDLE`에서는 컨트롤만 패치(카드가 없으니 `jam-drop` 재생 문제 없음).
+- `startDrawing()`: 코인 소모 + `coinStreak = 0`(뽑기는 이스터에그 카운트를 리셋).
+- `handleReaction()`: 기존처럼 `setReaction()`(이 브라우저의 "이미 반응함" 잠금, 카드당 1회 강제)
+  + 새로 `bumpStat()`(전체 합산 잼/노잼 카운트, 랭킹용)을 같이 호출한다.
+- 폼 검증은 `bindFormValidation()`이 `input` 이벤트로 처리(전체 재렌더 없음). 제출은
+  `submitForm()`이 DOM에서 값을 직접 읽어(controlled state 없음) `addCustomStory()` 호출 후
+  `done` 모달로 전환.
+
+## 데이터 (localStorage 키)
+
+| 키 | 내용 |
+|---|---|
+| `jam-machine:reactions` | `{ [storyId]: 'jam' \| 'nojam' }` — 이 브라우저의 카드별 반응 1회 잠금 |
+| `jam-machine:lastStoryId` | 직전 뽑힌 스토리 id (연속 중복 방지용) |
+| `jaemyae.custom.v1` | 이 브라우저가 등록한 커스텀 `Story[]` |
+| `jaemyae.stats.v1` | `{ [storyId]: { jam: number, nojam: number } }` — 랭킹용 합산 카운트 |
+
+- `src/data/stories100.json`: 기본 제공 10개, `{ id, title, category, content, author: '챗쮜피티' }`.
+  99개 중 카테고리별로 고루 뽑은 것(동물/언어 2개씩, 나머지 1개씩) — 나머지 89개는 더 이상 안 씀.
+- (예전에 있던 "소진 카운트"(`dispensedCount`, 뽑을수록 재고가 줄어드는 연출)는 제거함 — 새
+  스펙에서 재고 숫자는 "뽑기 풀 전체 합계"로 표시하기로 바뀌었기 때문. `getDispensedCount`/
+  `incrementDispensedCount`는 storage.ts에서 삭제됨.)
+
+## 디자인 시스템 (손그림 낙서풍, doodle)
+
+**정체성**: 실사 자판기 묘사 금지. 메인은 한 화면, 나머지는 모달. 라이선스 캐릭터 IP 금지 — 마스코트는
+자체 도형만. 플레이스홀더/글자수 카운터/검증 문구도 넣지 않는다(폼 모달).
+
+- **테두리**: 모든 면 3px `#22302B` 실선 (칩·작은 알약만 2px).
+- **라운드**: 비대칭, 네 값 모두 다르게. 패널 `40/36/42/34` · 모달 `34/30/36/32` · 디스플레이 창
+  `28/24/30/26` · 카드 `22/18/24/20` · 버튼 `24/20/26/22` · 입력 필드 `16/13/17/14`.
+- **하드 섀도**: 패널 `0 8px 0`, 모달 `0 8px 0`, CTA·코인·모달CTA `0 6px 0`, 카드·반응버튼
+  `0 4~5px 0`. 블러 섀도는 패널 바닥 그림자 하나만.
+- **눌림 인터랙션**: hover `translateY(-1px)` + 섀도 +1px, active `translateY(4px)` + 섀도 +2px.
+- **반짝이**: `✦`/`✧`, Gaegu, 패널 기준 절대배치 6개, 크기/색/딜레이 모두 다르게.
+- **컬러** (아래 팔레트 외 색 추가 금지, 그라디언트·블러 섀도 남발 금지):
+  | 용도 | 값 |
+  |---|---|
+  | 아웃라인/잉크 | `#22302B` |
+  | 페이지 배경 | `#FBEFEF` |
+  | 패널/모달 | `#F7F1DF` |
+  | 입력·창 안쪽 | `#FFFDF6` · 카드 `#FFFFFF` |
+  | CTA 활성 | `#F14E32` + 흰 텍스트 |
+  | CTA 비활성 | `#E3DDCB` / 텍스트 `#A79F8C` |
+  | 코인 무지개 | `#F14E32 #F2913D #F5C542 #13BD7E #3C8DE0 #7250C7` |
+  | 코인(투입 전) | `#C9C4BA`, 슬롯 배경 `#FFE9A8` |
+  | 마스코트 박스 | `#DFF6EC` · 뽑는 중 `#FFE9C9` |
+  | 잼/노잼 선택 | `#DFF6EC` / `#FFE0D8` |
+  | 보조/흐린 텍스트 | `#8A8078` / `#A79F8C` |
+  | 점선 구분선 `#D8D2C2` · 빈 상태 테두리 `#C9C4BA` | |
+  | 랭킹 메달 1/2/3 | `#F5C542` / `#E3DDCB` / `#F5A79B` |
+- **타이포**: 본문 `'SpoqaHanSans','Malgun Gothic','Apple SD Gothic Neo',Helvetica,Arial,sans-serif`.
+  포인트(워드마크·CTA·모달 제목·카드 타이틀·버튼 라벨)는 Google Fonts **Gaegu** 400/700. 워드마크
+  2.3rem / 모달 제목 1.7rem / 모달 CTA 1.4rem(메인 CTA 1.3rem) / 필드 라벨 1.1rem / 안내 0.72rem.
+  전역 `word-break: keep-all`.
+- **반응형**: 모바일 우선, 패널/모달 `max-width: 400px`/`380px` 고정. 최소 터치 타깃 44px 이상
+  (CTA 64px, 모달 CTA 58px, 코인 슬롯 74px, 모달 닫기 34px). `prefers-reduced-motion`에서
+  bob/shake/twinkle 정지, 카드·모달 등장은 fade로 대체.
+- **애니메이션**: `jam-drop`(카드·모달 등장) · `jam-shake`(뽑는 중) · `jam-bob`(마스코트/로딩점/코인)
+  · `jam-blink`(눈 깜빡임) · `jam-fade`(전환) · `jam-twinkle`(반짝이).
+
+## 백엔드 (Supabase — 아직 미연동, 맨 마지막 단계)
+
+**사용자가 "일단 프론트 다 끝내고 Supabase는 맨 마지막에 하고 싶다"고 명시함(2026-09-16). 사용자가
+먼저 꺼내지 않는 한 이 절의 작업을 시작하지 말 것.**
+
+- 실제 Supabase 프로젝트는 이미 생성돼 있음: URL `https://ntnthopkdmlipflnawcg.supabase.co`,
+  `.env.local`/GitHub Actions secrets에 연결 정보 설정 완료(`VITE_SUPABASE_URL`,
+  `VITE_SUPABASE_ANON_KEY`), `@supabase/supabase-js` 설치 및 `src/supabaseClient.ts` 배선 완료.
+- **이전에 이 문서에 적어뒀던 스키마(jam_count/nojam_count 컬럼 + RPC 함수 방식)는 폐기.** 사용자가
+  나중에 준 정식 명세(`supabase.md`, 핸드오프 문서)가 우선하며, 실제로 DB에 적용해야 할 스키마는
+  다음과 같다 — **아직 Supabase 프로젝트에는 적용 안 됨(로컬 프로토타입만 완성된 상태)**:
+
+  ```sql
+  create extension if not exists pgcrypto;
+
+  create table stories (
+    id uuid primary key default gen_random_uuid(),
+    title text not null check (char_length(title) between 1 and 40),
+    body text not null check (char_length(body) between 1 and 600),
+    author text not null default '챗쮜피티',
+    is_hidden boolean not null default false,
+    created_at timestamptz not null default now()
+  );
+
+  create table reactions (
+    id bigint generated always as identity primary key,
+    story_id uuid not null references stories(id) on delete cascade,
+    kind text not null check (kind in ('jam','nojam')),
+    voter text not null,
+    created_at timestamptz not null default now(),
+    unique (story_id, voter)
+  );
+
+  create index reactions_story_idx on reactions(story_id);
+
+  create view story_stats as
+  select s.id, s.title, s.body, s.author,
+         count(*) filter (where r.kind = 'jam')   as jam,
+         count(*) filter (where r.kind = 'nojam') as nojam
+  from stories s
+  left join reactions r on r.story_id = s.id
+  where s.is_hidden = false
+  group by s.id;
+
+  alter table stories enable row level security;
+  alter table reactions enable row level security;
+
+  create policy stories_read on stories for select using (is_hidden = false);
+  create policy stories_insert on stories for insert with check (true);
+  create policy reactions_read on reactions for select using (true);
+  create policy reactions_insert on reactions for insert with check (true);
+  ```
+  - update/delete 정책 없음 → anon 키로는 삭제 불가(대시보드에서 `is_hidden = true`로 소프트 삭제).
+  - `voter`는 최초 방문 시 `crypto.randomUUID()`로 만들어 localStorage(`jaemyae.voter`)에 저장,
+    반응 중복은 `unique(story_id, voter)` 위반(23505)으로 감지.
+  - 프런트 반영 시 할 일: 뽑기 풀을 서버 목록으로 교체, 로컬 `jaemyae.custom.v1`/`jaemyae.stats.v1`
+    은 Supabase insert/`story_stats` 조회로 대체, 로딩 실패 시 "자판기 점검 중이에요" + 재시도 UI
+    추가, 순위표는 모달 열 때마다 조회(캐시 없음).
+  - **이전 세션에서 (구)스키마로 만든 `stories` 테이블/RPC가 실제 프로젝트에 남아 있을 수 있음** —
+    이 작업을 시작할 때 대시보드에서 기존 테이블 상태부터 확인하고, 위 새 스키마와 맞지 않으면
+    정리 후 새로 만들 것.
+
+## 배포
+
+- 저장소: https://github.com/soooru/jaemyae (public)
+- `main` 브랜치에 push하면 `.github/workflows/deploy.yml`이 자동으로 build → GitHub Pages 배포.
+- 배포 URL: https://soooru.github.io/jaemyae/
+- "push해줘 / 배포해줘"라고 하면 commit + push만 하면 됨. Actions가 나머지를 처리하며,
+  `gh run watch`로 배포 성공 여부만 확인.
+- Supabase 연동 시에도 이 파이프라인은 그대로 유지 — 관리형 서비스라 별도 배포 단계가 없고, 이미
+  `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`가 로컬 `.env.local`과 GitHub Actions secrets에
+  등록돼 있어 `deploy.yml` build 스텝에 env로 전달된다(코드에서 실제로 쓰기 시작하면 그대로 동작).
+- **이터레이션 스타일**: 사용자가 구체적인 UX 문제나 원하는 카피를 던지면 → 수정 → (가능하면)
+  빌드/스팟체크(+가능하면 브라우저로 직접 클릭해보고 확인) → 커밋 → push → 배포 확인까지 한 번에
+  진행. 매번 재확인받지 않아도 됨. 사용자가 직접 파일을 고쳐놓는 경우도 있으니 그건 의도된 최신
+  상태로 보고 그 위에서 이어서 작업.
+
+## 하지 말 것
+
+- 메뉴·탭·설정 등 추가 내비게이션 (메인은 한 화면, 나머지는 모달).
+- native `alert`/`confirm` 사용.
+- 입력 필드 플레이스홀더, 글자수 카운터, 검증 안내 문구(폼 모달).
+- 순위표(rank) 상시 노출 버튼 — 이스터에그(코인 7연속 클릭)와 목록 모달 링크로만 진입.
+- 디자인 팔레트 외 색상 추가, 실사 자판기 묘사, 그라디언트/블러 섀도 남발.
+- 라이선스 있는 캐릭터 IP 사용 — 마스코트는 자체 도형으로만.
+- `.claude/` 디렉터리 내용을 커밋하거나 공개 저장소에 노출 (gitignore 유지).
+- 사용자가 먼저 꺼내지 않는 한 Supabase 연동 작업을 시작하지 않기 (위 "백엔드" 절 참고 — 지금은
+  프론트가 우선).

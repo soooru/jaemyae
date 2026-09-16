@@ -1,16 +1,26 @@
 import './style.css';
 import storiesData from './data/stories100.json';
-import type { MachineState, ReactionType, Story } from './types';
+import type {
+  MachineState,
+  ModalKind,
+  ReactionType,
+  StatsMap,
+  Story,
+} from './types';
 import {
-  getDispensedCount,
+  addCustomStory,
+  bumpStat,
+  getCustomStories,
   getLastStoryId,
   getReaction,
-  incrementDispensedCount,
+  getStats,
+  removeCustomStory,
+  resetStats,
   setLastStoryId,
   setReaction,
 } from './storage';
 
-const stories = storiesData as Story[];
+const defaultStories = storiesData as Story[];
 
 const DRAWING_DURATION_MS = 1800;
 const LOADING_MESSAGES = [
@@ -20,20 +30,48 @@ const LOADING_MESSAGES = [
 ];
 const LOADING_INTERVAL_MS = 700;
 
-const REFILL_ALERT =
-  '쩨리에게 줄 잼얘 채울 현장직을 모집합니다\n 대기업 쥐사 / 남해 근무 \n 일당 100?만원 / 숙식제공 ';
+const RAINBOW_COLORS = [
+  '#F14E32',
+  '#F2913D',
+  '#F5C542',
+  '#13BD7E',
+  '#3C8DE0',
+  '#7250C7',
+];
+const EASTER_EGG_STREAK = 7;
+const EASTER_EGG_MAX_GAP_MS = 1100;
+
+const JOB_INFO = [
+  ['근무처', '대기업 지사'],
+  ['근무지', '남해'],
+  ['일당', '100?만원'],
+  ['복리', '숙식제공'],
+];
 
 let state: MachineState = 'IDLE';
 let currentStory: Story | undefined;
 let currentReaction: ReactionType | undefined;
 let hasCoin = false;
-let dispensedCount = getDispensedCount();
-let showRefillAlert = false;
 let loadingTimer: ReturnType<typeof setInterval> | undefined;
+
+let coinClickCount = 0;
+let coinStreak = 0;
+let lastCoinClickAt = 0;
+
+let modal: ModalKind | undefined;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
+function allStories(): Story[] {
+  return [...defaultStories, ...getCustomStories()];
+}
+
+function poolSize(): number {
+  return allStories().length;
+}
+
 function pickRandomStory(excludeId: string | undefined): Story | undefined {
+  const stories = allStories();
   if (stories.length === 0) return undefined;
   if (stories.length === 1) return stories[0];
   const candidates = stories.filter((s) => s.id !== excludeId);
@@ -41,8 +79,35 @@ function pickRandomStory(excludeId: string | undefined): Story | undefined {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+function openModal(kind: ModalKind): void {
+  modal = kind;
+  render();
+}
+
+function closeModal(): void {
+  modal = undefined;
+  render();
+}
+
 function insertCoin(): void {
-  if (hasCoin || state === 'DRAWING') return;
+  if (state === 'DRAWING') return;
+
+  const now = Date.now();
+  coinStreak = now - lastCoinClickAt <= EASTER_EGG_MAX_GAP_MS ? coinStreak + 1 : 1;
+  lastCoinClickAt = now;
+  coinClickCount += 1;
+
+  if (coinStreak === EASTER_EGG_STREAK) {
+    coinStreak = 0;
+    openModal('rank');
+    return;
+  }
+
+  if (hasCoin) {
+    // Already loaded — this click only cycled the rainbow color above.
+    updateControls();
+    return;
+  }
   hasCoin = true;
 
   if (state === 'RESULT' || state === 'REACTED') {
@@ -64,6 +129,7 @@ function insertCoin(): void {
 function startDrawing(): void {
   if (!hasCoin || state === 'DRAWING') return;
   hasCoin = false;
+  coinStreak = 0;
   state = 'DRAWING';
   currentReaction = undefined;
   render();
@@ -79,10 +145,7 @@ function startDrawing(): void {
     if (loadingTimer) clearInterval(loadingTimer);
     const next = pickRandomStory(currentStory?.id ?? getLastStoryId());
     currentStory = next;
-    if (next) {
-      setLastStoryId(next.id);
-      dispensedCount = incrementDispensedCount();
-    }
+    if (next) setLastStoryId(next.id);
     currentReaction = next ? getReaction(next.id) : undefined;
     state = next ? (currentReaction ? 'REACTED' : 'RESULT') : 'RESULT';
     render();
@@ -92,29 +155,26 @@ function startDrawing(): void {
 function handleReaction(reaction: ReactionType): void {
   if (!currentStory || currentReaction) return;
   setReaction(currentStory.id, reaction);
+  bumpStat(currentStory.id, reaction);
   currentReaction = reaction;
   state = 'REACTED';
   render();
-}
-
-function remainingStock(): number {
-  return Math.max(stories.length - dispensedCount, 0);
 }
 
 function getIdleHintHtml(): string {
   const hint = hasCoin
     ? '준비 완료! 잼얘 뽑기를 눌러보세요.'
     : '먼저 오른쪽 코인을 넣어주세요.';
-  return `따쮜가 엄선하지 않은 잼얘가 <br/> <b class="idle-hint__count">${remainingStock()}개</b> 들어 있어요.<br>${hint}`;
+  return `따쮜가 엄선하지 않은 잼얘가 <br/> <b class="idle-hint__count">${poolSize()}개</b> 들어 있어요.<br>${hint}`;
 }
 
 function updateIdleHint(): void {
   const hintEl = app.querySelector<HTMLElement>('.idle-hint');
-  if (hintEl && stories.length > 0) hintEl.innerHTML = getIdleHintHtml();
+  if (hintEl && poolSize() > 0) hintEl.innerHTML = getIdleHintHtml();
 }
 
 function renderMascotOrEmpty(): string {
-  if (stories.length === 0) {
+  if (poolSize() === 0) {
     return `
       <div class="mascot-state empty-state">
         <p class="idle-hint">앗, 자판기가 비었어요!</p>
@@ -187,9 +247,10 @@ function renderResultOrReacted(): string {
   return `
     <div class="card">
       <div class="card__head">
-        <span class="card__title">${currentStory.title ?? '오늘의 잼얘'}</span>
+        <span class="card__title">${currentStory.title ?? '제목 없는 잼얘'}</span>
       </div>
       <p class="card__content">${currentStory.content}</p>
+      <p class="card__author">— ${currentStory.author ?? '챗쮜피티'}</p>
     </div>
     <div class="reactions">
       <button class="${jamClass}" data-action="jam" ${reacted ? 'disabled' : ''}>잼 🙂</button>
@@ -199,43 +260,14 @@ function renderResultOrReacted(): string {
   `;
 }
 
-function openRefillAlert(): void {
-  showRefillAlert = true;
-  render();
-}
-
-function closeRefillAlert(): void {
-  showRefillAlert = false;
-  render();
-}
-
-function renderRefillAlert(): string {
-  if (!showRefillAlert) return '';
-  const lines = REFILL_ALERT.trim()
-    .split('\n')
-    .map((line) => `<p class="alert-box__line">${line}</p>`)
-    .join('');
-
-  return `
-    <div class="alert-overlay" data-action="alert-backdrop">
-      <div class="alert-box" role="alertdialog" aria-modal="true">
-        <span class="alert-box__icon">⚠</span>
-        <p class="alert-box__title">급구</p>
-        <div class="alert-box__body">${lines}</div>
-        <button class="alert-box__close" data-action="alert-close">확인</button>
-      </div>
-    </div>
-  `;
-}
-
 function getControlsViewModel() {
-  const canDraw = hasCoin && state !== 'DRAWING' && stories.length > 0;
+  const canDraw = hasCoin && state !== 'DRAWING' && poolSize() > 0;
   const ctaLabel =
     state === 'DRAWING'
       ? '뽑는 중...'
       : state === 'IDLE'
         ? '잼얘 뽑기'
-        : '<s>꿈결</s>코인을 넣어주세요';
+        : '하나 더 뽑기';
   const ctaClass = [
     'cta',
     canDraw ? 'cta--active' : '',
@@ -245,7 +277,10 @@ function getControlsViewModel() {
     .join(' ');
   const coinSlotClass = `coin-slot ${hasCoin ? 'coin-slot--ready' : ''}`.trim();
   const coinClass = `coin ${hasCoin ? 'coin--ready' : ''}`.trim();
-  const coinDisabled = hasCoin || state === 'DRAWING';
+  const coinColor = hasCoin
+    ? RAINBOW_COLORS[(coinClickCount - 1) % RAINBOW_COLORS.length]
+    : '';
+  const coinDisabled = state === 'DRAWING';
   const coinLabel = hasCoin ? 'READY' : 'INSERT';
 
   return {
@@ -254,6 +289,7 @@ function getControlsViewModel() {
     ctaClass,
     coinSlotClass,
     coinClass,
+    coinColor,
     coinDisabled,
     coinLabel,
   };
@@ -272,9 +308,251 @@ function updateControls(): void {
   coinBtn.className = vm.coinSlotClass;
   coinBtn.disabled = vm.coinDisabled;
   const coinSpan = coinBtn.querySelector<HTMLElement>('.coin');
-  if (coinSpan) coinSpan.className = vm.coinClass;
+  if (coinSpan) {
+    coinSpan.className = vm.coinClass;
+    coinSpan.style.background = vm.coinColor;
+  }
   const labelSpan = coinBtn.querySelector<HTMLElement>('.coin-slot__label');
   if (labelSpan) labelSpan.textContent = vm.coinLabel;
+}
+
+// ---- modals ----
+
+function renderModalShell(title: string, bodyHtml: string): string {
+  return `
+    <div class="modal-overlay" data-action="modal-backdrop">
+      <div class="modal" role="dialog" aria-modal="true">
+        <button class="modal__close" data-action="modal-close" aria-label="닫기">✕</button>
+        <h2 class="modal__title">${title}</h2>
+        ${bodyHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderJobModal(): string {
+  const infoRows = JOB_INFO.map(
+    ([label, value]) =>
+      `<div class="job-info__row"><span class="job-info__label">${label}</span><span class="job-info__value">${value}</span></div>`,
+  ).join('');
+
+  return renderModalShell(
+    '채용공고',
+    `
+      <span class="job-badge">급 구</span>
+      <p class="job-subtitle">쩨리에게 줄 잼얘 채울<br />현장직을 모집합니다</p>
+      <div class="job-info">${infoRows}</div>
+      <button class="modal-cta" data-action="job-apply">지원하기</button>
+    `,
+  );
+}
+
+function renderFormModal(): string {
+  return renderModalShell(
+    '잼얘 채우기',
+    `
+      <div class="field">
+        <label class="field__label" for="form-author">작업자</label>
+        <input class="field__input" id="form-author" maxlength="20" data-field="author" />
+      </div>
+      <div class="field">
+        <label class="field__label" for="form-title">제목</label>
+        <input class="field__input" id="form-title" maxlength="40" data-field="title" />
+      </div>
+      <div class="field">
+        <label class="field__label" for="form-body">
+          잼얘 본문 <span class="field__hint">추천: 5문장 이내</span>
+        </label>
+        <textarea class="field__input field__input--area" id="form-body" rows="5" data-field="body"></textarea>
+      </div>
+      <button class="modal-cta" data-action="form-submit" disabled>자판기에 넣기</button>
+    `,
+  );
+}
+
+function renderDoneModal(): string {
+  return renderModalShell(
+    '채용 완료',
+    `
+      <div class="mascot-state">
+        <div class="mascot">
+          <div class="mascot__face">
+            <div class="mascot__eyes">
+              <span class="mascot__eye"></span>
+              <span class="mascot__eye"></span>
+            </div>
+            <span class="mascot__mouth"></span>
+          </div>
+        </div>
+        <p class="idle-hint">채용 완료! / 잼얘 하나가 들어갔어요.<br />이제 자판기에서 뽑힐 수 있어요.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-cta modal-cta--secondary" data-action="done-again">하나 더</button>
+        <button class="modal-cta" data-action="done-list">목록 보기</button>
+      </div>
+    `,
+  );
+}
+
+function renderListModal(): string {
+  const customs = getCustomStories();
+  const items = customs.length
+    ? customs
+        .map(
+          (story) => `
+            <div class="list-card">
+              <div class="list-card__head">
+                <span class="list-card__title">${story.title ?? '제목 없는 잼얘'}</span>
+                <span class="list-card__by">by ${story.author ?? '챗쮜피티'}</span>
+              </div>
+              <p class="list-card__content">${story.content}</p>
+              <button class="pill-btn pill-btn--danger" data-action="list-delete" data-story-id="${story.id}">삭제</button>
+            </div>
+          `,
+        )
+        .join('')
+    : `<div class="empty-box">아직 채워진 잼얘가 없어요</div>`;
+
+  return renderModalShell(
+    '들어간 잼얘',
+    `
+      <p class="modal-subtitle">${customs.length}개가 자판기에 채워져 있어요</p>
+      <div class="list-stack">${items}</div>
+      <div class="modal-footer">
+        <button class="link-btn" data-action="list-rank">잼얘 순위표 보기</button>
+        <button class="modal-cta" data-action="list-add">잼얘 추가하기</button>
+      </div>
+    `,
+  );
+}
+
+interface RankRow {
+  id: string;
+  title?: string;
+  author?: string;
+  jam: number;
+  nojam: number;
+}
+
+const MEDALS = ['#F5C542', '#E3DDCB', '#F5A79B'];
+
+function renderRankModal(): string {
+  const stats: StatsMap = getStats();
+  const rows: RankRow[] = allStories().map((story) => {
+    const stat = stats[story.id] ?? { jam: 0, nojam: 0 };
+    return {
+      id: story.id,
+      title: story.title,
+      author: story.author,
+      jam: stat.jam,
+      nojam: stat.nojam,
+    };
+  });
+  const totalVotes = rows.reduce((sum, row) => sum + row.jam + row.nojam, 0);
+
+  if (totalVotes === 0) {
+    return renderModalShell(
+      '잼얘 순위표',
+      `
+        <p class="modal-subtitle">지금까지 0표가 모였어요</p>
+        <div class="empty-box">아직 반응이 없어요</div>
+      `,
+    );
+  }
+
+  const best = [...rows].sort((a, b) => b.jam - a.jam).slice(0, 3);
+  const worst = [...rows].sort((a, b) => b.nojam - a.nojam).slice(0, 3);
+  const storyById = new Map(allStories().map((story) => [story.id, story]));
+
+  const withBody = (group: RankRow[], countKey: 'jam' | 'nojam') =>
+    group
+      .map((row, i) => {
+        const story = storyById.get(row.id);
+        return `
+          <div class="rank-item">
+            <div class="rank-item__head">
+              <span class="rank-medal" style="background:${MEDALS[i]}">${i + 1}</span>
+              <span class="rank-item__title">${row.title ?? '제목 없는 잼얘'}</span>
+              <span class="rank-item__by">by ${row.author ?? '챗쮜피티'}</span>
+              <span class="rank-item__count">${row[countKey]}표</span>
+            </div>
+            <p class="rank-item__body">${story?.content ?? ''}</p>
+          </div>
+        `;
+      })
+      .join('');
+
+  return renderModalShell(
+    '잼얘 순위표',
+    `
+      <p class="modal-subtitle">지금까지 ${totalVotes}표가 모였어요</p>
+      <div class="rank-group">
+        <span class="rank-group__badge rank-group__badge--best">베스트 잼얘</span>
+        <div class="rank-stack">${withBody(best, 'jam')}</div>
+      </div>
+      <div class="rank-group">
+        <span class="rank-group__badge rank-group__badge--worst">워스트 잼얘</span>
+        <div class="rank-stack">${withBody(worst, 'nojam')}</div>
+      </div>
+      <button class="link-btn" data-action="rank-reset">기록 초기화</button>
+    `,
+  );
+}
+
+function renderModal(): string {
+  if (!modal) return '';
+  switch (modal) {
+    case 'job':
+      return renderJobModal();
+    case 'form':
+      return renderFormModal();
+    case 'done':
+      return renderDoneModal();
+    case 'list':
+      return renderListModal();
+    case 'rank':
+      return renderRankModal();
+    default:
+      return '';
+  }
+}
+
+function submitForm(): void {
+  const authorEl = app.querySelector<HTMLInputElement>('[data-field="author"]');
+  const titleEl = app.querySelector<HTMLInputElement>('[data-field="title"]');
+  const bodyEl = app.querySelector<HTMLTextAreaElement>('[data-field="body"]');
+  const author = authorEl?.value.trim();
+  const title = titleEl?.value.trim();
+  const body = bodyEl?.value.trim();
+  if (!author || !title || !body) return;
+
+  addCustomStory({
+    id: crypto.randomUUID(),
+    title,
+    content: body,
+    author,
+  });
+  openModal('done');
+}
+
+function bindFormValidation(): void {
+  const form = app.querySelector<HTMLElement>('.modal');
+  const submitBtn = app.querySelector<HTMLButtonElement>(
+    '[data-action="form-submit"]',
+  );
+  if (!form || !submitBtn) return;
+
+  const checkValid = () => {
+    const authorEl = form.querySelector<HTMLInputElement>('[data-field="author"]');
+    const titleEl = form.querySelector<HTMLInputElement>('[data-field="title"]');
+    const bodyEl = form.querySelector<HTMLTextAreaElement>('[data-field="body"]');
+    const valid = Boolean(
+      authorEl?.value.trim() && titleEl?.value.trim() && bodyEl?.value.trim(),
+    );
+    submitBtn.disabled = !valid;
+  };
+
+  form.addEventListener('input', checkValid);
 }
 
 function render(): void {
@@ -285,15 +563,8 @@ function render(): void {
         ? renderDrawing()
         : renderResultOrReacted();
 
-  const {
-    ctaClass,
-    canDraw,
-    ctaLabel,
-    coinSlotClass,
-    coinClass,
-    coinDisabled,
-    coinLabel,
-  } = getControlsViewModel();
+  const { ctaClass, canDraw, ctaLabel, coinSlotClass, coinClass, coinColor, coinDisabled, coinLabel } =
+    getControlsViewModel();
 
   app.innerHTML = `
     <div class="page">
@@ -318,15 +589,15 @@ function render(): void {
         <div class="controls">
           <button class="${ctaClass}" data-action="draw" ${canDraw ? '' : 'disabled'}>${ctaLabel}</button>
           <button class="${coinSlotClass}" data-action="coin" ${coinDisabled ? 'disabled' : ''}>
-            <span class="${coinClass}"><span class="coin__slit"></span></span>
+            <span class="${coinClass}" style="background:${coinColor}"><span class="coin__slit"></span></span>
             <span class="coin-slot__label">${coinLabel}</span>
           </button>
         </div>
       </div>
 
-      <button class="easter-egg" data-action="refill">인력급구!인력급구!인력급구!</button>
+      <button class="easter-egg" data-action="job">인력급구!인력급구!</button>
     </div>
-    ${renderRefillAlert()}
+    ${renderModal()}
   `;
 
   app
@@ -342,16 +613,50 @@ function render(): void {
     .querySelector('[data-action="nojam"]')
     ?.addEventListener('click', () => handleReaction('nojam'));
   app
-    .querySelector('[data-action="refill"]')
-    ?.addEventListener('click', openRefillAlert);
+    .querySelector('[data-action="job"]')
+    ?.addEventListener('click', () => openModal('job'));
+
   app
-    .querySelector('[data-action="alert-close"]')
-    ?.addEventListener('click', closeRefillAlert);
+    .querySelector('[data-action="modal-close"]')
+    ?.addEventListener('click', closeModal);
   app
-    .querySelector('[data-action="alert-backdrop"]')
+    .querySelector('[data-action="modal-backdrop"]')
     ?.addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) closeRefillAlert();
+      if (e.target === e.currentTarget && modal !== 'form') closeModal();
     });
+  app
+    .querySelector('[data-action="job-apply"]')
+    ?.addEventListener('click', () => openModal('form'));
+  app
+    .querySelector('[data-action="form-submit"]')
+    ?.addEventListener('click', submitForm);
+  app
+    .querySelector('[data-action="done-again"]')
+    ?.addEventListener('click', () => openModal('form'));
+  app
+    .querySelector('[data-action="done-list"]')
+    ?.addEventListener('click', () => openModal('list'));
+  app
+    .querySelector('[data-action="list-rank"]')
+    ?.addEventListener('click', () => openModal('rank'));
+  app
+    .querySelector('[data-action="list-add"]')
+    ?.addEventListener('click', () => openModal('form'));
+  app.querySelectorAll<HTMLButtonElement>('[data-action="list-delete"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.storyId;
+      if (id) removeCustomStory(id);
+      render();
+    });
+  });
+  app
+    .querySelector('[data-action="rank-reset"]')
+    ?.addEventListener('click', () => {
+      resetStats();
+      render();
+    });
+
+  if (modal === 'form') bindFormValidation();
 }
 
 render();
