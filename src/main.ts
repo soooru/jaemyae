@@ -98,6 +98,9 @@ function openModal(kind: ModalKind): void {
 }
 
 function closeModal(): void {
+  if (modal === 'rank') {
+    hasCoin = false;
+  }
   modal = undefined;
   render();
 }
@@ -645,7 +648,14 @@ function bindFormValidation(): void {
   form.addEventListener('input', checkValid);
 }
 
+function updateBodyScrollLock(): void {
+  const locked = Boolean(modal) || resignSceneOpen || Boolean(alertMessage);
+  document.documentElement.style.overflow = locked ? 'hidden' : '';
+  document.body.style.overflow = locked ? 'hidden' : '';
+}
+
 function render(): void {
+  updateBodyScrollLock();
   const displayBody =
     loadState === 'loading'
       ? renderLoadingState()
