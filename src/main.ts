@@ -100,6 +100,7 @@ function openModal(kind: ModalKind): void {
 function closeModal(): void {
   if (modal === 'rank') {
     hasCoin = false;
+    coinClickCount = 0;
   }
   modal = undefined;
   render();
@@ -136,9 +137,9 @@ function insertCoin(): void {
   coinClickCount += 1;
 
   // The coin cycles red→orange→yellow→green→blue→purple; landing on purple
-  // (every 6th click, cumulative — draws don't reset it) pops the ranking
-  // modal instead of loading a coin, then the cycle naturally loops back to
-  // red on the next click via the modulo in getControlsViewModel().
+  // (every 6th click since the coin was last reset — by drawing or by
+  // closing the rank modal) pops the ranking modal instead of loading a
+  // coin, then the cycle naturally loops back to red on the next click.
   if (coinClickCount % RAINBOW_COLORS.length === 0) {
     openModal('rank');
     return;
@@ -170,6 +171,7 @@ function insertCoin(): void {
 function startDrawing(): void {
   if (!hasCoin || state === 'DRAWING') return;
   hasCoin = false;
+  coinClickCount = 0;
   state = 'DRAWING';
   currentReaction = undefined;
   render();
@@ -416,7 +418,7 @@ function renderResignScene(): string {
         <p>...저게 뭐지?<br />나는 눈을 깜빡였다.<br />그러자 눈 앞에 번뜩이는 패널이 보였다.</p>
         <p><span class="resign-scene__flash">재활용</span></p>
         <p>...아.</p>
-        <button class="modal-cta" data-action="resign-confirm">[ 눈 앞의 자판기를 응시하기 ]</button>
+        <button class="modal-cta" data-action="resign-confirm">눈 앞의 자판기를 응시하기</button>
       </div>
     </div>
   `;
@@ -492,7 +494,7 @@ function renderDoneModal(): string {
             <span class="mascot__mouth"></span>
           </div>
         </div>
-        <p class="idle-hint">작업 완료! / 잼얘 하나가 들어갔어요.<br />이제 자판기에서 뽑힐 수 있어요.</p>
+        <p class="idle-hint">잼얘 하나가 들어갔어요.<br />이제 자판기에서 뽑힐 수 있어요.</p>
       </div>
       <div class="modal-cta-group">
         <button class="modal-cta modal-cta--compact" data-action="done-again">하나 더</button>
