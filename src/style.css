@@ -598,17 +598,6 @@ body {
   cursor: not-allowed;
 }
 
-.link-btn {
-  background: none;
-  border: none;
-  padding: 4px;
-  color: var(--muted);
-  font-size: 0.85rem;
-  text-decoration: underline;
-  text-align: center;
-  cursor: pointer;
-}
-
 .empty-box {
   border: 2px dashed #c9c4ba;
   border-radius: 18px 14px 20px 16px;
@@ -681,6 +670,11 @@ body {
     sans-serif;
   font-size: 0.72rem;
   color: var(--cta-disabled-fg);
+}
+
+.field__hint--error {
+  margin: 4px 0 0;
+  color: var(--cta-active-bg);
 }
 
 .field__input {

@@ -4,9 +4,8 @@
 친구용(쩨리를 위한) 장난 프로젝트. 프론트엔드는 Vite + vanilla TypeScript(정적 사이트).
 
 **진행 순서(사용자 지정)**: 프론트엔드(모달 4종 · UGC 등록 · 랭킹)를 localStorage 프로토타입으로
-먼저 완성 → 그다음 맨 마지막에 Supabase로 교체. 지금은 프론트 구현이 끝난 상태이고, Supabase
-연동은 아직 시작 전이다(아래 "백엔드" 절 참고). **Supabase 얘기가 먼저 나와도 사용자가 명시적으로
-"이제 Supabase 하자"고 하기 전까지는 백엔드 코드를 건드리지 말 것.**
+먼저 완성 → 그다음 맨 마지막에 Supabase로 교체. 프론트 구현은 끝났고, **2026-09-17부터 Supabase
+연동 작업이 진행 중**이다(아래 "백엔드" 절 · `task.md` 참고).
 
 ## 프로젝트 개요
 
@@ -197,67 +196,69 @@ src/
 - **애니메이션**: `jam-drop`(카드·모달 등장) · `jam-shake`(뽑는 중) · `jam-bob`(마스코트/로딩점/코인)
   · `jam-blink`(눈 깜빡임) · `jam-fade`(전환) · `jam-twinkle`(반짝이).
 
-## 백엔드 (Supabase — 아직 미연동, 맨 마지막 단계)
+## 백엔드 (Supabase — 연동 작업 진행 중, 2026-09-17 시작)
 
-**사용자가 "일단 프론트 다 끝내고 Supabase는 맨 마지막에 하고 싶다"고 명시함(2026-09-16). 사용자가
-먼저 꺼내지 않는 한 이 절의 작업을 시작하지 말 것.**
+**사용자가 2026-09-17에 "Supabase부터 시작할거야"라고 명시적으로 시작을 지시함.** 아래 스키마는
+실제 프로젝트에 **적용 완료**된 상태(SQL Editor로 실행함). 프론트 코드 쪽 연동(allStories/
+submitForm/handleReaction/rank 모달 교체)은 진행 중 — 상태는 `task.md` 참고.
 
-- 실제 Supabase 프로젝트는 이미 생성돼 있음: URL `https://ntnthopkdmlipflnawcg.supabase.co`,
-  `.env.local`/GitHub Actions secrets에 연결 정보 설정 완료(`VITE_SUPABASE_URL`,
-  `VITE_SUPABASE_ANON_KEY`), `@supabase/supabase-js` 설치 및 `src/supabaseClient.ts` 배선 완료.
-- **이전에 이 문서에 적어뒀던 스키마(jam_count/nojam_count 컬럼 + RPC 함수 방식)는 폐기.** 사용자가
-  나중에 준 정식 명세(`supabase.md`, 핸드오프 문서)가 우선하며, 실제로 DB에 적용해야 할 스키마는
-  다음과 같다 — **아직 Supabase 프로젝트에는 적용 안 됨(로컬 프로토타입만 완성된 상태)**:
+- Supabase 프로젝트: URL `https://ntnthopkdmlipflnawcg.supabase.co`, `.env.local`/GitHub Actions
+  secrets에 연결 정보 설정 완료(`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`),
+  `@supabase/supabase-js` 설치 및 `src/supabaseClient.ts` 배선 완료.
+- **스키마 설계가 두 번 바뀜**: (1) 최초 시도 — `jam_count`/`nojam_count` + RPC. (2) 한때 문서화했던
+  `reactions`(`voter` + `unique(story_id, voter)`) + `story_stats` 뷰 방식. **(2)는 사용자가
+  "로그인도 없는데 voter로 중복을 막는 게 의미가 없다"고 지적해서 폐기**하고, 다시 (1)과 같은 카운터
+  방식으로 확정함(2026-09-17) — 다만 컬럼을 프론트 `Story` 타입(`title`/`content`/`category`/
+  `author`)에 맞춰 재설계. **현재 실제로 적용된 스키마**:
 
   ```sql
-  create extension if not exists pgcrypto;
-
-  create table stories (
+  create table public.stories (
     id uuid primary key default gen_random_uuid(),
-    title text not null check (char_length(title) between 1 and 40),
-    body text not null check (char_length(body) between 1 and 600),
+    title text,
+    content text not null check (char_length(content) between 1 and 600),
+    category text,
     author text not null default '챗쮜피티',
+    jam_count integer not null default 0,
+    nojam_count integer not null default 0,
     is_hidden boolean not null default false,
     created_at timestamptz not null default now()
   );
 
-  create table reactions (
-    id bigint generated always as identity primary key,
-    story_id uuid not null references stories(id) on delete cascade,
-    kind text not null check (kind in ('jam','nojam')),
-    voter text not null,
-    created_at timestamptz not null default now(),
-    unique (story_id, voter)
-  );
+  alter table public.stories enable row level security;
 
-  create index reactions_story_idx on reactions(story_id);
+  create policy stories_read on public.stories for select using (is_hidden = false);
+  create policy stories_insert on public.stories for insert with check (true);
 
-  create view story_stats as
-  select s.id, s.title, s.body, s.author,
-         count(*) filter (where r.kind = 'jam')   as jam,
-         count(*) filter (where r.kind = 'nojam') as nojam
-  from stories s
-  left join reactions r on r.story_id = s.id
-  where s.is_hidden = false
-  group by s.id;
+  create or replace function public.react_to_story(story_id uuid, reaction text)
+  returns void
+  language sql
+  security definer
+  set search_path = public
+  as $$
+    update public.stories
+    set jam_count = jam_count + (case when reaction = 'jam' then 1 else 0 end),
+        nojam_count = nojam_count + (case when reaction = 'nojam' then 1 else 0 end)
+    where id = story_id and is_hidden = false and reaction in ('jam', 'nojam');
+  $$;
 
-  alter table stories enable row level security;
-  alter table reactions enable row level security;
-
-  create policy stories_read on stories for select using (is_hidden = false);
-  create policy stories_insert on stories for insert with check (true);
-  create policy reactions_read on reactions for select using (true);
-  create policy reactions_insert on reactions for insert with check (true);
+  grant execute on function public.react_to_story(uuid, text) to anon;
   ```
-  - update/delete 정책 없음 → anon 키로는 삭제 불가(대시보드에서 `is_hidden = true`로 소프트 삭제).
-  - `voter`는 최초 방문 시 `crypto.randomUUID()`로 만들어 localStorage(`jaemyae.voter`)에 저장,
-    반응 중복은 `unique(story_id, voter)` 위반(23505)으로 감지.
-  - 프런트 반영 시 할 일: 뽑기 풀을 서버 목록으로 교체, 로컬 `jaemyae.custom.v1`/`jaemyae.stats.v1`
-    은 Supabase insert/`story_stats` 조회로 대체, 로딩 실패 시 "자판기 점검 중이에요" + 재시도 UI
-    추가, 순위표는 모달 열 때마다 조회(캐시 없음).
-  - **이전 세션에서 (구)스키마로 만든 `stories` 테이블/RPC가 실제 프로젝트에 남아 있을 수 있음** —
-    이 작업을 시작할 때 대시보드에서 기존 테이블 상태부터 확인하고, 위 새 스키마와 맞지 않으면
-    정리 후 새로 만들 것.
+
+  - **`reactions`/`voter`/`story_stats` 뷰는 만들지 않음** — 반응 중복 방지는 여전히 지금처럼
+    **로컬(같은 브라우저, `jam-machine:reactions` 키)에서만** 처리한다. 서버는 그냥 카운트만 올림.
+    이유: 회원가입이 없는 장난 프로젝트라 "누가 투표했는지"를 서버가 안다고 해서 부정 투표를
+    막을 수 있는 게 아니고(localStorage 지우면 그만), 이 프로젝트 스코프에서 그 정도 방지는
+    불필요하다고 판단함.
+  - update/delete 정책 없음 → anon 키로는 카운트 직접 수정 불가, 오직 `react_to_story` RPC(SECURITY
+    DEFINER)로만 증가 가능. 삭제는 여전히 대시보드에서 `is_hidden = true` 소프트 삭제(추후 기획).
+  - **정리 완료**: 이전 세션이 만든 구버전 `stories` 테이블(id 17602, jam_count/nojam_count + RPC)과
+    구 `react_to_story` 함수는 `drop table ... cascade` / `drop function`으로 삭제 후 위 스키마로
+    재생성함(레코드 0개 상태였어서 데이터 손실 없음).
+  - 프런트 반영 시 할 일: `allStories()` — 앱 시작 시 Supabase `stories` select로 교체(+ 로딩
+    실패 시 "자판기 점검 중이에요" + 재시도 UI). `submitForm()` — `stories` insert. `handleReaction()`
+    — `supabase.rpc('react_to_story', {story_id, reaction})` 호출(로컬 `jam-machine:reactions` 잠금은
+    유지). `rank` 모달 — `stories`를 `jam_count`/`nojam_count` 기준으로 정렬 조회. 기본 제공 10개
+    (`stories100.json`)는 이 테이블에 시드 insert 필요.
 
 ## 배포
 
@@ -283,5 +284,3 @@ src/
 - 디자인 팔레트 외 색상 추가, 실사 자판기 묘사, 그라디언트/블러 섀도 남발.
 - 라이선스 있는 캐릭터 IP 사용 — 마스코트는 자체 도형으로만.
 - `.claude/` 디렉터리 내용을 커밋하거나 공개 저장소에 노출 (gitignore 유지).
-- 사용자가 먼저 꺼내지 않는 한 Supabase 연동 작업을 시작하지 않기 (위 "백엔드" 절 참고 — 지금은
-  프론트가 우선).

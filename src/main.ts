@@ -1,25 +1,12 @@
 import './style.css';
-import storiesData from './data/stories100.json';
-import type {
-  MachineState,
-  ModalKind,
-  ReactionType,
-  StatsMap,
-  Story,
-} from './types';
+import type { LoadState, MachineState, ModalKind, ReactionType, Story } from './types';
+import { fetchStories, insertStory, reactToStory } from './api';
 import {
-  addCustomStory,
-  bumpStat,
-  getCustomStories,
   getLastStoryId,
   getReaction,
-  getStats,
-  resetStats,
   setLastStoryId,
   setReaction,
 } from './storage';
-
-const defaultStories = storiesData as Story[];
 
 const DRAWING_DURATION_MS = 1800;
 const LOADING_MESSAGES = [
@@ -45,6 +32,8 @@ const JOB_INFO = [
 ];
 
 let state: MachineState = 'IDLE';
+let loadState: LoadState = 'loading';
+let stories: Story[] = [];
 let currentStory: Story | undefined;
 let currentReaction: ReactionType | undefined;
 let hasCoin = false;
@@ -53,11 +42,26 @@ let loadingTimer: ReturnType<typeof setInterval> | undefined;
 let coinClickCount = 0;
 
 let modal: ModalKind | undefined;
+let formSubmitting = false;
+let formError: string | undefined;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 function allStories(): Story[] {
-  return [...defaultStories, ...getCustomStories()];
+  return stories;
+}
+
+async function loadStories(): Promise<void> {
+  loadState = 'loading';
+  render();
+  try {
+    stories = await fetchStories();
+    loadState = 'ready';
+  } catch (err) {
+    console.error('잼얘 목록을 불러오지 못함:', err);
+    loadState = 'error';
+  }
+  render();
 }
 
 function poolSize(): number {
@@ -65,16 +69,20 @@ function poolSize(): number {
 }
 
 function pickRandomStory(excludeId: string | undefined): Story | undefined {
-  const stories = allStories();
-  if (stories.length === 0) return undefined;
-  if (stories.length === 1) return stories[0];
-  const candidates = stories.filter((s) => s.id !== excludeId);
-  const pool = candidates.length > 0 ? candidates : stories;
+  const available = allStories();
+  if (available.length === 0) return undefined;
+  if (available.length === 1) return available[0];
+  const candidates = available.filter((s) => s.id !== excludeId);
+  const pool = candidates.length > 0 ? candidates : available;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function openModal(kind: ModalKind): void {
   modal = kind;
+  if (kind === 'form') {
+    formError = undefined;
+    formSubmitting = false;
+  }
   render();
 }
 
@@ -147,11 +155,16 @@ function startDrawing(): void {
 
 function handleReaction(reaction: ReactionType): void {
   if (!currentStory || currentReaction) return;
-  setReaction(currentStory.id, reaction);
-  bumpStat(currentStory.id, reaction);
+  const story = currentStory;
+  setReaction(story.id, reaction);
+  story[reaction] += 1;
   currentReaction = reaction;
   state = 'REACTED';
   render();
+
+  reactToStory(story.id, reaction).catch((err) => {
+    console.error('반응 전송 실패:', err);
+  });
 }
 
 function getIdleHintHtml(): string {
@@ -164,6 +177,32 @@ function getIdleHintHtml(): string {
 function updateIdleHint(): void {
   const hintEl = app.querySelector<HTMLElement>('.idle-hint');
   if (hintEl && poolSize() > 0) hintEl.innerHTML = getIdleHintHtml();
+}
+
+function renderLoadingState(): string {
+  return `
+    <div class="mascot-state">
+      <div class="mascot">
+        <div class="mascot__face">
+          <div class="mascot__eyes">
+            <span class="mascot__eye"></span>
+            <span class="mascot__eye"></span>
+          </div>
+          <span class="mascot__mouth"></span>
+        </div>
+      </div>
+      <p class="idle-hint">잼얘 불러오는 중...</p>
+    </div>
+  `;
+}
+
+function renderErrorState(): string {
+  return `
+    <div class="mascot-state empty-state">
+      <p class="idle-hint">자판기 점검 중이에요.<br />잠시 후 다시 시도해주세요.</p>
+      <button class="modal-cta" data-action="retry-load">다시 시도</button>
+    </div>
+  `;
 }
 
 function renderMascotOrEmpty(): string {
@@ -254,7 +293,7 @@ function renderResultOrReacted(): string {
 }
 
 function getControlsViewModel() {
-  const canDraw = hasCoin && state !== 'DRAWING' && poolSize() > 0;
+  const canDraw = hasCoin && state !== 'DRAWING' && loadState === 'ready' && poolSize() > 0;
   const ctaLabel =
     state === 'DRAWING'
       ? '뽑는 중...'
@@ -273,7 +312,7 @@ function getControlsViewModel() {
   const coinColor = hasCoin
     ? RAINBOW_COLORS[(coinClickCount - 1) % RAINBOW_COLORS.length]
     : '';
-  const coinDisabled = state === 'DRAWING';
+  const coinDisabled = state === 'DRAWING' || loadState !== 'ready';
   const coinLabel = hasCoin ? 'READY' : 'INSERT';
 
   return {
@@ -341,24 +380,28 @@ function renderJobModal(): string {
 }
 
 function renderFormModal(): string {
+  const errorHtml = formError
+    ? `<p class="field__hint field__hint--error" data-form-error>${formError}</p>`
+    : '';
   return renderModalShell(
     '잼얘 채우기',
     `
       <div class="field">
         <label class="field__label" for="form-author">작업자</label>
-        <input class="field__input" id="form-author" maxlength="20" data-field="author" />
+        <input class="field__input" id="form-author" maxlength="20" data-field="author" ${formSubmitting ? 'disabled' : ''} />
       </div>
       <div class="field">
         <label class="field__label" for="form-title">제목</label>
-        <input class="field__input" id="form-title" maxlength="40" data-field="title" />
+        <input class="field__input" id="form-title" maxlength="40" data-field="title" ${formSubmitting ? 'disabled' : ''} />
       </div>
       <div class="field">
         <label class="field__label" for="form-body">
           잼얘 본문 <span class="field__hint">추천: 5문장 이내</span>
         </label>
-        <textarea class="field__input field__input--area" id="form-body" rows="5" data-field="body"></textarea>
+        <textarea class="field__input field__input--area" id="form-body" rows="5" data-field="body" ${formSubmitting ? 'disabled' : ''}></textarea>
       </div>
-      <button class="modal-cta" data-action="form-submit" disabled>자판기에 넣기</button>
+      ${errorHtml}
+      <button class="modal-cta" data-action="form-submit" disabled>${formSubmitting ? '등록 중...' : '자판기에 넣기'}</button>
     `,
   );
 }
@@ -384,28 +427,10 @@ function renderDoneModal(): string {
   );
 }
 
-interface RankRow {
-  id: string;
-  title?: string;
-  author?: string;
-  jam: number;
-  nojam: number;
-}
-
 const MEDALS = ['#F5C542', '#E3DDCB', '#F5A79B'];
 
 function renderRankModal(): string {
-  const stats: StatsMap = getStats();
-  const rows: RankRow[] = allStories().map((story) => {
-    const stat = stats[story.id] ?? { jam: 0, nojam: 0 };
-    return {
-      id: story.id,
-      title: story.title,
-      author: story.author,
-      jam: stat.jam,
-      nojam: stat.nojam,
-    };
-  });
+  const rows = allStories();
   const totalVotes = rows.reduce((sum, row) => sum + row.jam + row.nojam, 0);
 
   if (totalVotes === 0) {
@@ -420,24 +445,22 @@ function renderRankModal(): string {
 
   const best = [...rows].sort((a, b) => b.jam - a.jam).slice(0, 3);
   const worst = [...rows].sort((a, b) => b.nojam - a.nojam).slice(0, 3);
-  const storyById = new Map(allStories().map((story) => [story.id, story]));
 
-  const withBody = (group: RankRow[], countKey: 'jam' | 'nojam') =>
+  const withBody = (group: Story[], countKey: 'jam' | 'nojam') =>
     group
-      .map((row, i) => {
-        const story = storyById.get(row.id);
-        return `
+      .map(
+        (story, i) => `
           <div class="rank-item">
             <div class="rank-item__head">
               <span class="rank-medal" style="background:${MEDALS[i]}">${i + 1}</span>
-              <span class="rank-item__title">${row.title ?? '제목 없는 잼얘'}</span>
-              <span class="rank-item__by">by ${row.author ?? '챗쮜피티'}</span>
-              <span class="rank-item__count">${row[countKey]}표</span>
+              <span class="rank-item__title">${story.title ?? '제목 없는 잼얘'}</span>
+              <span class="rank-item__by">by ${story.author ?? '챗쮜피티'}</span>
+              <span class="rank-item__count">${story[countKey]}표</span>
             </div>
-            <p class="rank-item__body">${story?.content ?? ''}</p>
+            <p class="rank-item__body">${story.content}</p>
           </div>
-        `;
-      })
+        `,
+      )
       .join('');
 
   return renderModalShell(
@@ -452,7 +475,6 @@ function renderRankModal(): string {
         <span class="rank-group__badge rank-group__badge--worst">워스트 잼얘</span>
         <div class="rank-stack">${withBody(worst, 'nojam')}</div>
       </div>
-      <button class="link-btn" data-action="rank-reset">기록 초기화</button>
     `,
   );
 }
@@ -473,7 +495,39 @@ function renderModal(): string {
   }
 }
 
-function submitForm(): void {
+function updateFormModal(): void {
+  const modalEl = app.querySelector<HTMLElement>('.modal');
+  if (!modalEl) return;
+  const submitBtn = modalEl.querySelector<HTMLButtonElement>('[data-action="form-submit"]');
+  const authorEl = modalEl.querySelector<HTMLInputElement>('[data-field="author"]');
+  const titleEl = modalEl.querySelector<HTMLInputElement>('[data-field="title"]');
+  const bodyEl = modalEl.querySelector<HTMLTextAreaElement>('[data-field="body"]');
+  for (const el of [authorEl, titleEl, bodyEl]) {
+    if (el) el.disabled = formSubmitting;
+  }
+  if (submitBtn) {
+    submitBtn.textContent = formSubmitting ? '등록 중...' : '자판기에 넣기';
+    const valid = Boolean(
+      authorEl?.value.trim() && titleEl?.value.trim() && bodyEl?.value.trim(),
+    );
+    submitBtn.disabled = formSubmitting || !valid;
+  }
+  let errorEl = modalEl.querySelector<HTMLElement>('[data-form-error]');
+  if (formError) {
+    if (!errorEl) {
+      errorEl = document.createElement('p');
+      errorEl.className = 'field__hint field__hint--error';
+      errorEl.setAttribute('data-form-error', '');
+      submitBtn?.insertAdjacentElement('beforebegin', errorEl);
+    }
+    errorEl.textContent = formError;
+  } else if (errorEl) {
+    errorEl.remove();
+  }
+}
+
+async function submitForm(): Promise<void> {
+  if (formSubmitting) return;
   const authorEl = app.querySelector<HTMLInputElement>('[data-field="author"]');
   const titleEl = app.querySelector<HTMLInputElement>('[data-field="title"]');
   const bodyEl = app.querySelector<HTMLTextAreaElement>('[data-field="body"]');
@@ -482,13 +536,21 @@ function submitForm(): void {
   const body = bodyEl?.value.trim();
   if (!author || !title || !body) return;
 
-  addCustomStory({
-    id: crypto.randomUUID(),
-    title,
-    content: body,
-    author,
-  });
-  openModal('done');
+  formSubmitting = true;
+  formError = undefined;
+  updateFormModal();
+
+  try {
+    const story = await insertStory({ title, content: body, author });
+    stories.push(story);
+    formSubmitting = false;
+    openModal('done');
+  } catch (err) {
+    console.error('잼얘 등록 실패:', err);
+    formSubmitting = false;
+    formError = '어이쿠, 등록에 실패했어요. 다시 시도해주세요.';
+    updateFormModal();
+  }
 }
 
 function bindFormValidation(): void {
@@ -513,11 +575,15 @@ function bindFormValidation(): void {
 
 function render(): void {
   const displayBody =
-    state === 'IDLE'
-      ? renderMascotOrEmpty()
-      : state === 'DRAWING'
-        ? renderDrawing()
-        : renderResultOrReacted();
+    loadState === 'loading'
+      ? renderLoadingState()
+      : loadState === 'error'
+        ? renderErrorState()
+        : state === 'IDLE'
+          ? renderMascotOrEmpty()
+          : state === 'DRAWING'
+            ? renderDrawing()
+            : renderResultOrReacted();
 
   const { ctaClass, canDraw, ctaLabel, coinSlotClass, coinClass, coinColor, coinDisabled, coinLabel } =
     getControlsViewModel();
@@ -590,13 +656,12 @@ function render(): void {
     .querySelector('[data-action="done-again"]')
     ?.addEventListener('click', () => openModal('form'));
   app
-    .querySelector('[data-action="rank-reset"]')
+    .querySelector('[data-action="retry-load"]')
     ?.addEventListener('click', () => {
-      resetStats();
-      render();
+      loadStories();
     });
 
   if (modal === 'form') bindFormValidation();
 }
 
-render();
+loadStories();

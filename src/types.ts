@@ -4,6 +4,8 @@ export interface Story {
   content: string
   category?: string
   author?: string
+  jam: number
+  nojam: number
 }
 
 export type MachineState = 'IDLE' | 'DRAWING' | 'RESULT' | 'REACTED'
@@ -14,9 +16,4 @@ export type ReactionMap = Record<string, ReactionType>
 
 export type ModalKind = 'job' | 'form' | 'done' | 'rank'
 
-export interface StoryStat {
-  jam: number
-  nojam: number
-}
-
-export type StatsMap = Record<string, StoryStat>
+export type LoadState = 'loading' | 'ready' | 'error'
