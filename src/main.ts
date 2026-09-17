@@ -24,12 +24,21 @@ const RAINBOW_COLORS = [
   '#3C8DE0',
   '#7250C7',
 ];
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 const JOB_INFO = [
   ['근무처', '대기업 지사'],
   ['근무지', '남해'],
   ['일당', '100?만원'],
   ['복리', '숙식제공'],
 ];
+// 워스트 잼얘 삭제 기능은 아직 미구현 — 버튼만 먼저 준비.
+const CLEANER_ALERT_TEXT = '◆자판기 청소부 구함◆ $$일당두둑$$ →→ 모집 준비중!!';
 
 let state: MachineState = 'IDLE';
 let loadState: LoadState = 'loading';
@@ -44,6 +53,8 @@ let coinClickCount = 0;
 let modal: ModalKind | undefined;
 let formSubmitting = false;
 let formError: string | undefined;
+let resignSceneOpen = false;
+let alertMessage: string | undefined;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -88,6 +99,31 @@ function openModal(kind: ModalKind): void {
 
 function closeModal(): void {
   modal = undefined;
+  render();
+}
+
+function openResignScene(): void {
+  resignSceneOpen = true;
+  render();
+}
+
+function closeResignScene(): void {
+  resignSceneOpen = false;
+  modal = undefined;
+  state = 'IDLE';
+  hasCoin = false;
+  currentStory = undefined;
+  currentReaction = undefined;
+  render();
+}
+
+function showAlert(message: string): void {
+  alertMessage = message;
+  render();
+}
+
+function closeAlert(): void {
+  alertMessage = undefined;
   render();
 }
 
@@ -314,6 +350,7 @@ function getControlsViewModel() {
     : '';
   const coinDisabled = state === 'DRAWING' || loadState !== 'ready';
   const coinLabel = hasCoin ? 'READY' : 'INSERT';
+  const coinSlotBg = hasCoin ? hexToRgba(coinColor, 0.32) : '';
 
   return {
     canDraw,
@@ -322,6 +359,7 @@ function getControlsViewModel() {
     coinSlotClass,
     coinClass,
     coinColor,
+    coinSlotBg,
     coinDisabled,
     coinLabel,
   };
@@ -339,6 +377,7 @@ function updateControls(): void {
 
   coinBtn.className = vm.coinSlotClass;
   coinBtn.disabled = vm.coinDisabled;
+  coinBtn.style.background = vm.coinSlotBg;
   const coinSpan = coinBtn.querySelector<HTMLElement>('.coin');
   if (coinSpan) {
     coinSpan.className = vm.coinClass;
@@ -357,6 +396,36 @@ function renderModalShell(title: string, bodyHtml: string): string {
         <button class="modal__close" data-action="modal-close" aria-label="닫기">✕</button>
         <h2 class="modal__title">${title}</h2>
         ${bodyHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderResignScene(): string {
+  if (!resignSceneOpen) return '';
+  return `
+    <div class="resign-overlay">
+      <div class="resign-scene">
+        <p>나는 무거운 눈을 깜빡였다.</p>
+        <p class="resign-scene__sfx">위이이이잉!</p>
+        <p>기계 돌아가는 소리가 요란하게 난다.<br />나는 고개를 돌렸다.</p>
+        <p class="resign-scene__bracket">[ 스티커 제거 ]</p>
+        <p>...저게 뭐지?<br />나는 눈을 깜빡였다.<br />그러자 눈 앞에 번뜩이는 패널이 보였다.</p>
+        <p><span class="resign-scene__flash">재활용</span></p>
+        <p>...아.</p>
+        <button class="modal-cta" data-action="resign-confirm">[ 눈 앞의 자판기를 응시하기 ]</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAlertOverlay(): string {
+  if (!alertMessage) return '';
+  return `
+    <div class="alert-overlay" data-action="alert-backdrop">
+      <div class="alert-box" role="alertdialog" aria-modal="true">
+        <p class="alert-box__message">${alertMessage}</p>
+        <button class="modal-cta" data-action="alert-close">확인</button>
       </div>
     </div>
   `;
@@ -422,7 +491,10 @@ function renderDoneModal(): string {
         </div>
         <p class="idle-hint">작업 완료! / 잼얘 하나가 들어갔어요.<br />이제 자판기에서 뽑힐 수 있어요.</p>
       </div>
-      <button class="modal-cta" data-action="done-again">하나 더</button>
+      <div class="modal-cta-group">
+        <button class="modal-cta modal-cta--compact" data-action="done-again">하나 더</button>
+        <button class="modal-cta modal-cta--compact modal-cta--secondary" data-action="resign">퇴사하기</button>
+      </div>
     `,
   );
 }
@@ -585,7 +657,7 @@ function render(): void {
             ? renderDrawing()
             : renderResultOrReacted();
 
-  const { ctaClass, canDraw, ctaLabel, coinSlotClass, coinClass, coinColor, coinDisabled, coinLabel } =
+  const { ctaClass, canDraw, ctaLabel, coinSlotClass, coinClass, coinColor, coinSlotBg, coinDisabled, coinLabel } =
     getControlsViewModel();
 
   app.innerHTML = `
@@ -610,16 +682,21 @@ function render(): void {
 
         <div class="controls">
           <button class="${ctaClass}" data-action="draw" ${canDraw ? '' : 'disabled'}>${ctaLabel}</button>
-          <button class="${coinSlotClass}" data-action="coin" ${coinDisabled ? 'disabled' : ''}>
+          <button class="${coinSlotClass}" data-action="coin" style="background:${coinSlotBg}" ${coinDisabled ? 'disabled' : ''}>
             <span class="${coinClass}" style="background:${coinColor}"><span class="coin__slit"></span></span>
             <span class="coin-slot__label">${coinLabel}</span>
           </button>
         </div>
       </div>
 
-      <button class="easter-egg" data-action="job">인력급구!인력급구!</button>
+      <div class="bottom-row">
+        <button class="easter-egg" data-action="job">인력급구!인력급구!인력급구!</button>
+        <button class="icon-btn" data-action="cleaner-job" aria-label="자판기 청소부 구함">🧹</button>
+      </div>
     </div>
     ${renderModal()}
+    ${renderResignScene()}
+    ${renderAlertOverlay()}
   `;
 
   app
@@ -659,6 +736,23 @@ function render(): void {
     .querySelector('[data-action="retry-load"]')
     ?.addEventListener('click', () => {
       loadStories();
+    });
+  app
+    .querySelector('[data-action="resign"]')
+    ?.addEventListener('click', openResignScene);
+  app
+    .querySelector('[data-action="resign-confirm"]')
+    ?.addEventListener('click', closeResignScene);
+  app
+    .querySelector('[data-action="cleaner-job"]')
+    ?.addEventListener('click', () => showAlert(CLEANER_ALERT_TEXT));
+  app
+    .querySelector('[data-action="alert-close"]')
+    ?.addEventListener('click', closeAlert);
+  app
+    .querySelector('[data-action="alert-backdrop"]')
+    ?.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeAlert();
     });
 
   if (modal === 'form') bindFormValidation();

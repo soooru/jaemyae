@@ -505,6 +505,32 @@ body {
   box-shadow: 0 1px 0 var(--ink);
 }
 
+.bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--display-bg);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 0 var(--ink);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.icon-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+
 /* --- modal system --- */
 
 .modal-overlay {
@@ -555,6 +581,7 @@ body {
 
 .modal__title {
   margin: 0 0 14px;
+  padding-left: 34px;
   padding-right: 34px;
   font-family: 'Gaegu', cursive;
   font-weight: 700;
@@ -598,6 +625,27 @@ body {
   cursor: not-allowed;
 }
 
+.modal-cta--secondary {
+  background: var(--display-bg);
+  color: var(--ink);
+}
+
+.modal-cta-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.modal-cta-group .modal-cta {
+  margin-top: 0;
+}
+
+.modal-cta--compact {
+  min-height: 46px;
+  font-size: 1.05rem;
+}
+
 .empty-box {
   border: 2px dashed #c9c4ba;
   border-radius: 18px 14px 20px 16px;
@@ -605,6 +653,90 @@ body {
   text-align: center;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+/* --- resign scene (easter egg) --- */
+
+.resign-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--page-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 60;
+  animation: jam-fade 0.2s ease both;
+}
+
+.resign-scene {
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel-bg);
+  border: 3px solid var(--ink);
+  border-radius: 34px 30px 36px 32px;
+  box-shadow: 0 8px 0 var(--ink);
+  padding: 24px 20px;
+  text-align: center;
+  animation: jam-drop 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+}
+
+.resign-scene p {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.resign-scene__sfx {
+  font-family: 'Gaegu', cursive;
+  font-weight: 700;
+  font-size: 1.3rem;
+}
+
+.resign-scene__bracket {
+  color: var(--muted);
+}
+
+.resign-scene__flash {
+  display: inline-block;
+  padding: 4px 14px;
+  background: var(--ink);
+  border-radius: 8px;
+  font-weight: 700;
+  font-style: italic;
+  animation: jam-resign-flash 1s steps(1) infinite;
+}
+
+/* --- alert overlay --- */
+
+.alert-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 48, 43, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 70;
+  animation: jam-fade 0.15s ease both;
+}
+
+.alert-box {
+  width: 100%;
+  max-width: 300px;
+  background: var(--panel-bg);
+  border: 3px solid var(--ink);
+  border-radius: 24px 20px 26px 22px;
+  box-shadow: 0 6px 0 var(--ink);
+  padding: 20px 18px;
+  text-align: center;
+  animation: jam-drop 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+}
+
+.alert-box__message {
+  margin: 0 0 14px;
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 /* --- job modal --- */
@@ -856,6 +988,17 @@ body {
   }
 }
 
+@keyframes jam-resign-flash {
+  0%,
+  49% {
+    color: #f5c542;
+  }
+  50%,
+  100% {
+    color: #f14e32;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sparkle,
   .mascot,
@@ -866,8 +1009,14 @@ body {
   .coin--ready {
     animation: none;
   }
+  .resign-scene__flash {
+    animation: none;
+    color: #f14e32;
+  }
   .card,
-  .modal {
+  .modal,
+  .resign-scene,
+  .alert-box {
     animation: jam-fade 0.3s ease both;
   }
 }
